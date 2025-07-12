@@ -1,0 +1,12 @@
+streamlit
+pandas
+python-dotenv
+pydantic
+langchain>=0.1.14
+faiss-cpu
+sentence-transformers
+PyPDF2
+unstructured
+google-generativeai
+langchain-google-genai
+langchain-huggingface
