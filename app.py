@@ -16,6 +16,9 @@ from langchain_huggingface import HuggingFaceEndpointEmbeddings
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.document_loaders import PyPDFLoader
 
+# ------------------- Streamlit UI Setup -------------------
+st.set_page_config(page_title="FinSight AI", layout="centered")
+
 # Load environment variables
 load_dotenv()
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
@@ -118,12 +121,13 @@ def get_trend_insight(start_date: str, end_date: str) -> str:
         return "Invalid date format."
 
     filtered = df[(df['Date'] >= start) & (df['Date'] <= end)]
-    if filtered.empty:
-        return "No data for that range."
+    if filtered.empty or len(filtered) < 2:
+        return "Insufficient data for trend analysis."
 
+    filtered = filtered.sort_values(by="Date")
     change = filtered['Close Price'].iloc[-1] - filtered['Close Price'].iloc[0]
     pct_change = round((change / filtered['Close Price'].iloc[0]) * 100, 2)
-    trend = "Increasing 📈" if change > 0 else "Decreasing 📉"
+    trend = "Increasing 📈" if change > 0 else ("Decreasing 📉" if change < 0 else "Stable 🔄")
     return f"From {start.date()} to {end.date()}, the stock is {trend} by ₹{round(change,2)} ({pct_change}%)."
 
 trend_tool = StructuredTool.from_function(
@@ -134,7 +138,6 @@ trend_tool = StructuredTool.from_function(
 )
 
 # ------------------- Transcript Semantic Search Tool -------------------
-# Loading and combining all PDF transcripts
 pdf_files = [
     "Earnings Call Transcript Q1 - FY25.pdf",
     "Earnings Call Transcript Q2 - FY25.pdf",
@@ -148,14 +151,19 @@ for file in pdf_files:
     pages = loader.load()
     all_pages.extend(pages)
 
-# Split and embed
-docs = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100).split_documents(all_pages)
-embedder = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-vectorstore = FAISS.from_documents(docs, embedder)
+with st.spinner("Indexing documents..."):
+    docs = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100).split_documents(all_pages)
+    embedder = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    vectorstore = FAISS.from_documents(docs, embedder)
 
+@st.cache_data(show_spinner=False)
 def search_transcripts(query: str) -> str:
-    results = vectorstore.similarity_search(query, k=3)
-    return "\n\n---\n\n".join([doc.page_content for doc in results])
+    try:
+        clean_query = query.strip().replace("\n", " ")[:300]
+        results = vectorstore.similarity_search(clean_query, k=3)
+        return "\n\n---\n\n".join([doc.page_content for doc in results])
+    except Exception as e:
+        return f"Transcript search error: {str(e)}"
 
 transcript_search_tool = Tool(
     name="SearchTranscripts",
@@ -176,7 +184,7 @@ agent = initialize_agent(
     tools=tools,
     llm=llm,
     agent=AgentType.STRUCTURED_CHAT_ZERO_SHOT_REACT_DESCRIPTION,
-    verbose=True,
+    verbose=False,
     agent_kwargs={
         "system_message": """
 You are a financial analyst assistant. You can answer questions about:
@@ -193,7 +201,6 @@ When using tools:
 )
 
 # ------------------- Streamlit UI -------------------
-st.set_page_config(page_title="FinSight AI", layout="centered")
 st.title("FinSight AI: Bajaj Finserv Chatbot")
 st.markdown("Ask anything about stock prices or investor discussions.")
 
